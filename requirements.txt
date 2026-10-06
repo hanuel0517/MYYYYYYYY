@@ -2,3 +2,6 @@ streamlit
 pandas
 numpy
 scikit-learn
+lxml
+html5lib
+beautifulsoup4
