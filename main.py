@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -32,149 +30,312 @@ st.markdown("""
 
 
 # ============================================================
-# 1. 데이터 불러오기
+# 1. CSV 파일 업로드
 # ============================================================
 
-FILE_NAME = "annual_temperature.csv"
+st.subheader("📂 데이터 파일")
+
+uploaded_file = st.file_uploader(
+    "연평균 기온 CSV 파일을 업로드하세요.",
+    type=["csv"]
+)
+
+if uploaded_file is None:
+    st.info("⬆️ 위 버튼을 눌러 CSV 파일을 업로드하세요.")
+    st.stop()
+
+
+# ============================================================
+# 2. CSV 읽기
+# ============================================================
 
 try:
-    df = pd.read_csv(FILE_NAME)
-
-except FileNotFoundError:
-    st.error(
-        f"데이터 파일 `{FILE_NAME}`을 찾을 수 없습니다.\n\n"
-        "main.py와 같은 폴더에 CSV 파일을 넣어주세요."
+    df = pd.read_csv(
+        uploaded_file,
+        encoding="utf-8-sig"
     )
+
+except UnicodeDecodeError:
+
+    try:
+        df = pd.read_csv(
+            uploaded_file,
+            encoding="cp949"
+        )
+
+    except Exception as e:
+        st.error(f"CSV 파일을 읽을 수 없습니다: {e}")
+        st.stop()
+
+except Exception as e:
+
+    st.error(f"CSV 파일을 읽을 수 없습니다: {e}")
     st.stop()
 
 
 # ============================================================
-# 2. 컬럼명 설정
+# 3. 컬럼명 정리
 # ============================================================
 
-# 실제 CSV의 컬럼명이 다르면 이 두 줄만 수정하세요.
-YEAR_COL = "연도"
-TEMP_COL = "연평균기온"
-
-
-# ============================================================
-# 3. 컬럼 존재 여부 확인
-# ============================================================
-
-if YEAR_COL not in df.columns:
-    st.error(
-        f"연도 컬럼 `{YEAR_COL}`을 찾을 수 없습니다.\n\n"
-        f"현재 CSV 컬럼: {list(df.columns)}"
-    )
-    st.stop()
-
-
-if TEMP_COL not in df.columns:
-    st.error(
-        f"기온 컬럼 `{TEMP_COL}`을 찾을 수 없습니다.\n\n"
-        f"현재 CSV 컬럼: {list(df.columns)}"
-    )
-    st.stop()
-
-
-# ============================================================
-# 4. 데이터 전처리
-# ============================================================
-
-data = df[[YEAR_COL, TEMP_COL]].copy()
-
-data[YEAR_COL] = pd.to_numeric(
-    data[YEAR_COL],
-    errors="coerce"
-)
-
-data[TEMP_COL] = pd.to_numeric(
-    data[TEMP_COL],
-    errors="coerce"
-)
-
-# 결측값 제거
-data = data.dropna(
-    subset=[YEAR_COL, TEMP_COL]
-)
-
-# 연도순 정렬
-data = data.sort_values(
-    YEAR_COL
-).reset_index(drop=True)
-
-
-# ============================================================
-# 5. 1906~2025년 데이터만 사용
-# ============================================================
-
-data = data[
-    (data[YEAR_COL] >= 1906) &
-    (data[YEAR_COL] <= 2025)
-].copy()
-
-
-# ============================================================
-# 6. 데이터 확인
-# ============================================================
-
-if len(data) == 0:
-    st.error(
-        "1906~2025년 사이의 데이터가 없습니다."
-    )
-    st.stop()
-
-
-st.subheader("📊 데이터 확인")
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric(
-    "데이터 시작 연도",
-    f"{int(data[YEAR_COL].min())}년"
-)
-
-col2.metric(
-    "데이터 마지막 연도",
-    f"{int(data[YEAR_COL].max())}년"
-)
-
-col3.metric(
-    "전체 데이터 수",
-    f"{len(data)}개"
+df.columns = (
+    df.columns
+    .astype(str)
+    .str.strip()
 )
 
 
-with st.expander("원본 데이터 보기"):
+# ============================================================
+# 4. 데이터 미리보기
+# ============================================================
+
+st.success(
+    f"파일 업로드 완료: {uploaded_file.name}"
+)
+
+st.write(
+    f"데이터 크기: **{df.shape[0]}행 × {df.shape[1]}열**"
+)
+
+with st.expander("원본 데이터 미리보기"):
+
     st.dataframe(
-        data,
+        df.head(20),
         use_container_width=True
     )
 
 
 # ============================================================
-# 7. 학습 / 테스트 데이터 분리
+# 5. 연도 컬럼 / 기온 컬럼 선택
 # ============================================================
 
+st.subheader("🔧 분석에 사용할 컬럼 선택")
+
+columns = list(df.columns)
+
+if len(columns) < 2:
+
+    st.error(
+        "분석하려면 최소 2개의 컬럼이 필요합니다."
+    )
+
+    st.stop()
+
+
 # ------------------------------------------------------------
-# 50년 학습
-# 1956~2005
+# 연도 컬럼 자동 추천
 # ------------------------------------------------------------
 
-train_50 = data[
-    (data[YEAR_COL] >= 1956) &
-    (data[YEAR_COL] <= 2005)
+year_candidates = [
+    col for col in columns
+    if any(
+        word in col.lower()
+        for word in ["연도", "year", "년도"]
+    )
+]
+
+if len(year_candidates) > 0:
+    default_year_index = columns.index(
+        year_candidates[0]
+    )
+else:
+    default_year_index = 0
+
+
+year_col = st.selectbox(
+    "① 연도 컬럼",
+    columns,
+    index=default_year_index
+)
+
+
+# ------------------------------------------------------------
+# 기온 컬럼 자동 추천
+# ------------------------------------------------------------
+
+temp_candidates = [
+    col for col in columns
+    if any(
+        word in col.lower()
+        for word in [
+            "기온",
+            "온도",
+            "temperature",
+            "temp"
+        ]
+    )
+]
+
+if len(temp_candidates) > 0:
+
+    default_temp_index = columns.index(
+        temp_candidates[0]
+    )
+
+else:
+
+    # 연도 컬럼을 제외한 첫 번째 컬럼
+    other_columns = [
+        col for col in columns
+        if col != year_col
+    ]
+
+    if len(other_columns) > 0:
+        default_temp_index = columns.index(
+            other_columns[0]
+        )
+    else:
+        default_temp_index = 0
+
+
+temp_col = st.selectbox(
+    "② 연평균 기온 컬럼",
+    columns,
+    index=default_temp_index
+)
+
+
+if year_col == temp_col:
+
+    st.error(
+        "연도 컬럼과 기온 컬럼은 서로 달라야 합니다."
+    )
+
+    st.stop()
+
+
+# ============================================================
+# 6. 데이터 전처리
+# ============================================================
+
+data = df[
+    [year_col, temp_col]
 ].copy()
 
 
 # ------------------------------------------------------------
-# 100년 학습
+# 연도 숫자 변환
+# ------------------------------------------------------------
+
+data[year_col] = pd.to_numeric(
+    data[year_col],
+    errors="coerce"
+)
+
+
+# ------------------------------------------------------------
+# 기온 숫자 변환
+# ------------------------------------------------------------
+
+data[temp_col] = pd.to_numeric(
+    data[temp_col],
+    errors="coerce"
+)
+
+
+# ------------------------------------------------------------
+# 결측값 제거
+# ------------------------------------------------------------
+
+before_count = len(data)
+
+data = data.dropna(
+    subset=[
+        year_col,
+        temp_col
+    ]
+)
+
+after_count = len(data)
+
+
+# ------------------------------------------------------------
+# 연도 정수화
+# ------------------------------------------------------------
+
+data[year_col] = data[year_col].astype(int)
+
+
+# ------------------------------------------------------------
+# 연도순 정렬
+# ------------------------------------------------------------
+
+data = data.sort_values(
+    year_col
+).reset_index(drop=True)
+
+
+# ============================================================
+# 7. 1906~2025년 데이터 선택
+# ============================================================
+
+data = data[
+    (data[year_col] >= 1906) &
+    (data[year_col] <= 2025)
+].copy()
+
+
+# ============================================================
+# 8. 데이터 확인
+# ============================================================
+
+if len(data) == 0:
+
+    st.error(
+        "1906~2025년 사이의 데이터가 없습니다."
+    )
+
+    st.stop()
+
+
+st.subheader("📊 분석 데이터")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+
+    st.metric(
+        "시작 연도",
+        f"{data[year_col].min()}년"
+    )
+
+with col2:
+
+    st.metric(
+        "마지막 연도",
+        f"{data[year_col].max()}년"
+    )
+
+with col3:
+
+    st.metric(
+        "분석 데이터 수",
+        f"{len(data)}개"
+    )
+
+
+# ============================================================
+# 9. 학습 / 테스트 데이터 분리
+# ============================================================
+
+# ------------------------------------------------------------
+# 최근 50년 학습
+# 1956~2005
+# ------------------------------------------------------------
+
+train_50 = data[
+    (data[year_col] >= 1956) &
+    (data[year_col] <= 2005)
+].copy()
+
+
+# ------------------------------------------------------------
+# 최근 100년 학습
 # 1906~2005
 # ------------------------------------------------------------
 
 train_100 = data[
-    (data[YEAR_COL] >= 1906) &
-    (data[YEAR_COL] <= 2005)
+    (data[year_col] >= 1906) &
+    (data[year_col] <= 2005)
 ].copy()
 
 
@@ -184,18 +345,19 @@ train_100 = data[
 # ------------------------------------------------------------
 
 test = data[
-    (data[YEAR_COL] >= 2006) &
-    (data[YEAR_COL] <= 2025)
+    (data[year_col] >= 2006) &
+    (data[year_col] <= 2025)
 ].copy()
 
 
 # ============================================================
-# 8. 데이터 개수 확인
+# 10. 데이터 개수 확인
 # ============================================================
 
 st.subheader("🗂️ 학습 / 테스트 데이터 분할")
 
-split_table = pd.DataFrame({
+split_df = pd.DataFrame({
+
     "구분": [
         "50년 학습",
         "100년 학습",
@@ -216,53 +378,85 @@ split_table = pd.DataFrame({
 })
 
 st.dataframe(
-    split_table,
+    split_df,
     use_container_width=True,
     hide_index=True
 )
 
 
 # ============================================================
-# 9. 데이터가 충분한지 확인
+# 11. 데이터 충분성 확인
 # ============================================================
 
 if len(train_50) < 2:
-    st.error("1956~2005년 학습 데이터가 부족합니다.")
+
+    st.error(
+        "1956~2005년 데이터가 부족합니다."
+    )
+
     st.stop()
+
 
 if len(train_100) < 2:
-    st.error("1906~2005년 학습 데이터가 부족합니다.")
+
+    st.error(
+        "1906~2005년 데이터가 부족합니다."
+    )
+
     st.stop()
+
 
 if len(test) < 1:
-    st.error("2006~2025년 테스트 데이터가 없습니다.")
+
+    st.error(
+        "2006~2025년 테스트 데이터가 없습니다."
+    )
+
     st.stop()
 
 
 # ============================================================
-# 10. X / y 설정
+# 12. X / y 설정
 # ============================================================
 
-X_train_50 = train_50[[YEAR_COL]]
-y_train_50 = train_50[TEMP_COL]
+X_train_50 = train_50[
+    [year_col]
+]
 
-X_train_100 = train_100[[YEAR_COL]]
-y_train_100 = train_100[TEMP_COL]
+y_train_50 = train_50[
+    temp_col
+]
 
-X_test = test[[YEAR_COL]]
-y_test = test[TEMP_COL]
+
+X_train_100 = train_100[
+    [year_col]
+]
+
+y_train_100 = train_100[
+    temp_col
+]
+
+
+X_test = test[
+    [year_col]
+]
+
+y_test = test[
+    temp_col
+]
 
 
 # ============================================================
-# 11. 선형회귀 모델 생성
+# 13. 선형회귀 모델
 # ============================================================
 
 model_50 = LinearRegression()
+
 model_100 = LinearRegression()
 
 
 # ============================================================
-# 12. 모델 학습
+# 14. 모델 학습
 # ============================================================
 
 model_50.fit(
@@ -277,7 +471,7 @@ model_100.fit(
 
 
 # ============================================================
-# 13. 회귀계수
+# 15. 회귀선 기울기 / 절편
 # ============================================================
 
 slope_50 = float(
@@ -287,6 +481,7 @@ slope_50 = float(
 intercept_50 = float(
     model_50.intercept_
 )
+
 
 slope_100 = float(
     model_100.coef_[0]
@@ -298,7 +493,7 @@ intercept_100 = float(
 
 
 # ============================================================
-# 14. 테스트 데이터 예측
+# 16. 테스트 데이터 예측
 # ============================================================
 
 pred_50 = model_50.predict(
@@ -311,7 +506,7 @@ pred_100 = model_100.predict(
 
 
 # ============================================================
-# 15. 성능 평가
+# 17. 평가 지표
 # ============================================================
 
 # ------------------------------------------------------------
@@ -355,64 +550,75 @@ r2_100 = r2_score(
 
 
 # ============================================================
-# 16. 회귀식 출력
+# 18. 회귀선
 # ============================================================
 
 st.subheader("📈 회귀선")
 
 col1, col2 = st.columns(2)
 
+
 with col1:
 
-    st.markdown("### 최근 50년 학습")
+    st.markdown(
+        "### 50년 학습 모델"
+    )
 
     st.latex(
         rf"""
-        \hat{{T}} =
-        {slope_50:.6f} \times Year
+        \hat{{T}}
+        =
+        {slope_50:.6f}
+        \times Year
         {intercept_50:+.3f}
         """
     )
 
     st.write(
-        f"기울기: **{slope_50:.6f} °C/년**"
+        f"**기울기:** {slope_50:.6f} °C/년"
     )
 
     st.write(
-        f"10년당 변화: **{slope_50 * 10:.4f} °C/10년**"
+        f"**10년당 변화:** "
+        f"{slope_50 * 10:.4f} °C/10년"
     )
 
 
 with col2:
 
-    st.markdown("### 최근 100년 학습")
+    st.markdown(
+        "### 100년 학습 모델"
+    )
 
     st.latex(
         rf"""
-        \hat{{T}} =
-        {slope_100:.6f} \times Year
+        \hat{{T}}
+        =
+        {slope_100:.6f}
+        \times Year
         {intercept_100:+.3f}
         """
     )
 
     st.write(
-        f"기울기: **{slope_100:.6f} °C/년**"
+        f"**기울기:** {slope_100:.6f} °C/년"
     )
 
     st.write(
-        f"10년당 변화: **{slope_100 * 10:.4f} °C/10년**"
+        f"**10년당 변화:** "
+        f"{slope_100 * 10:.4f} °C/10년"
     )
 
 
 # ============================================================
-# 17. 기울기 비교
+# 19. 기울기 비교
 # ============================================================
+
+st.subheader("📐 회귀선 기울기 비교")
 
 slope_difference = (
     slope_50 - slope_100
 )
-
-st.subheader("📐 회귀선 기울기 비교")
 
 col1, col2, col3 = st.columns(3)
 
@@ -449,28 +655,23 @@ elif slope_difference < 0:
 else:
 
     st.info(
-        "두 회귀선의 기울기가 동일합니다."
+        "두 회귀선의 기울기가 같습니다."
     )
 
 
 # ============================================================
-# 18. 성능 비교 결과
+# 20. 모델 성능 비교
 # ============================================================
 
 st.subheader(
-    "🎯 2006~2025년 테스트 데이터 예측 성능"
+    "🎯 2006~2025년 테스트 성능 비교"
 )
 
 results = pd.DataFrame({
 
-    "모델": [
+    "학습 모델": [
         "1956~2005 (50년)",
         "1906~2005 (100년)"
-    ],
-
-    "학습기간": [
-        "1956~2005",
-        "1906~2005"
     ],
 
     "기울기 (°C/년)": [
@@ -508,29 +709,31 @@ st.dataframe(
 
 
 # ============================================================
-# 19. 주요 성능 지표를 크게 표시
+# 21. 평가 지표를 크게 표시
 # ============================================================
 
-st.markdown("### 성능 지표")
-
 st.markdown(
-    "※ MAE와 MSE는 **낮을수록 좋고**, R²는 **높을수록 좋습니다.**"
+    "### 평가 지표"
 )
 
+st.caption(
+    "MAE와 MSE는 낮을수록 좋고, R²는 높을수록 좋습니다."
+)
 
 col1, col2, col3 = st.columns(3)
+
 
 with col1:
 
     st.markdown("#### MAE")
 
     st.metric(
-        "50년 모델",
+        "50년 학습",
         f"{mae_50:.4f}"
     )
 
     st.metric(
-        "100년 모델",
+        "100년 학습",
         f"{mae_100:.4f}"
     )
 
@@ -540,12 +743,12 @@ with col2:
     st.markdown("#### MSE")
 
     st.metric(
-        "50년 모델",
+        "50년 학습",
         f"{mse_50:.4f}"
     )
 
     st.metric(
-        "100년 모델",
+        "100년 학습",
         f"{mse_100:.4f}"
     )
 
@@ -555,59 +758,56 @@ with col3:
     st.markdown("#### R²")
 
     st.metric(
-        "50년 모델",
+        "50년 학습",
         f"{r2_50:.4f}"
     )
 
     st.metric(
-        "100년 모델",
+        "100년 학습",
         f"{r2_100:.4f}"
     )
 
 
 # ============================================================
-# 20. 어느 모델이 더 좋은지 자동 판단
+# 22. 어느 모델이 더 좋은지 비교
 # ============================================================
 
-st.subheader("🏆 모델 성능 비교")
+st.subheader("🏆 모델 성능 비교 결과")
 
 
-# MAE
 if mae_50 < mae_100:
 
-    mae_result = "50년 모델"
+    mae_result = "50년 학습 모델"
 
 elif mae_100 < mae_50:
 
-    mae_result = "100년 모델"
+    mae_result = "100년 학습 모델"
 
 else:
 
     mae_result = "동일"
 
 
-# MSE
 if mse_50 < mse_100:
 
-    mse_result = "50년 모델"
+    mse_result = "50년 학습 모델"
 
 elif mse_100 < mse_50:
 
-    mse_result = "100년 모델"
+    mse_result = "100년 학습 모델"
 
 else:
 
     mse_result = "동일"
 
 
-# R2
 if r2_50 > r2_100:
 
-    r2_result = "50년 모델"
+    r2_result = "50년 학습 모델"
 
 elif r2_100 > r2_50:
 
-    r2_result = "100년 모델"
+    r2_result = "100년 학습 모델"
 
 else:
 
@@ -616,7 +816,7 @@ else:
 
 comparison = pd.DataFrame({
 
-    "평가지표": [
+    "평가 지표": [
         "MAE",
         "MSE",
         "R²"
@@ -628,7 +828,7 @@ comparison = pd.DataFrame({
         r2_result
     ],
 
-    "판단 기준": [
+    "기준": [
         "낮을수록 좋음",
         "낮을수록 좋음",
         "높을수록 좋음"
@@ -644,33 +844,55 @@ st.dataframe(
 
 
 # ============================================================
-# 21. 테스트 기간 실제값 vs 예측값
+# 23. 2006~2025 실제값 vs 예측값
 # ============================================================
 
 st.subheader(
-    "📊 2006~2025년 실제값 vs 예측값"
+    "📊 2006~2025년 실제값과 예측값"
 )
+
 
 prediction = test.copy()
 
-prediction["50년 모델 예측"] = pred_50
+prediction["실제값"] = prediction[
+    temp_col
+]
 
-prediction["100년 모델 예측"] = pred_100
+prediction["50년 모델 예측"] = (
+    pred_50
+)
+
+prediction["100년 모델 예측"] = (
+    pred_100
+)
 
 prediction["50년 모델 오차"] = (
-    prediction[TEMP_COL]
+    prediction[temp_col]
     - prediction["50년 모델 예측"]
 )
 
 prediction["100년 모델 오차"] = (
-    prediction[TEMP_COL]
+    prediction[temp_col]
     - prediction["100년 모델 예측"]
 )
 
 
+# 보기 좋은 컬럼 순서
+prediction_display = prediction[
+    [
+        year_col,
+        "실제값",
+        "50년 모델 예측",
+        "100년 모델 예측",
+        "50년 모델 오차",
+        "100년 모델 오차"
+    ]
+].copy()
+
+
 st.dataframe(
-    prediction.style.format({
-        TEMP_COL: "{:.2f}",
+    prediction_display.style.format({
+        "실제값": "{:.2f}",
         "50년 모델 예측": "{:.2f}",
         "100년 모델 예측": "{:.2f}",
         "50년 모델 오차": "{:.2f}",
@@ -682,32 +904,28 @@ st.dataframe(
 
 
 # ============================================================
-# 22. 테스트 기간 그래프
-# matplotlib 없이 Streamlit line chart 사용
+# 24. 2006~2025년 그래프
 # ============================================================
 
 st.subheader(
-    "📉 2006~2025년 예측 그래프"
+    "📉 2006~2025년 실제값과 예측값 그래프"
 )
 
-chart_data = prediction[
+
+chart_data = prediction_display[
     [
-        YEAR_COL,
-        TEMP_COL,
+        year_col,
+        "실제값",
         "50년 모델 예측",
         "100년 모델 예측"
     ]
 ].copy()
 
+
 chart_data = chart_data.set_index(
-    YEAR_COL
+    year_col
 )
 
-chart_data.columns = [
-    "실제 연평균기온",
-    "50년 모델",
-    "100년 모델"
-]
 
 st.line_chart(
     chart_data,
@@ -716,27 +934,31 @@ st.line_chart(
 
 
 # ============================================================
-# 23. 전체 기간 실제 데이터
+# 25. 1906~2025 전체 데이터 그래프
 # ============================================================
 
 st.subheader(
     "🌡️ 1906~2025년 연평균 기온"
 )
 
+
 full_chart = data[
     [
-        YEAR_COL,
-        TEMP_COL
+        year_col,
+        temp_col
     ]
 ].copy()
 
+
 full_chart = full_chart.set_index(
-    YEAR_COL
+    year_col
 )
 
+
 full_chart.columns = [
-    "연평균기온"
+    "연평균 기온"
 ]
+
 
 st.line_chart(
     full_chart,
@@ -745,7 +967,7 @@ st.line_chart(
 
 
 # ============================================================
-# 24. 회귀선 비교 데이터 생성
+# 26. 전체 기간 회귀선 비교
 # ============================================================
 
 years = np.arange(
@@ -753,39 +975,52 @@ years = np.arange(
     2026
 )
 
+
 regression_data = pd.DataFrame({
     "연도": years
 })
 
-regression_data["실제 연평균기온"] = (
-    data.set_index(YEAR_COL)[TEMP_COL]
-    .reindex(years)
-)
 
-regression_data["50년 회귀선"] = (
-    model_50.predict(
-        years.reshape(-1, 1)
-    )
-)
-
-regression_data["100년 회귀선"] = (
-    model_100.predict(
-        years.reshape(-1, 1)
-    )
-)
-
-regression_data = regression_data.set_index(
-    "연도"
+# 실제값
+actual_series = (
+    data
+    .set_index(year_col)[temp_col]
 )
 
 
-# ============================================================
-# 25. 전체 기간 회귀선 비교
-# ============================================================
+regression_data[
+    "실제 연평균 기온"
+] = actual_series.reindex(
+    years
+).values
+
+
+# 50년 회귀선
+regression_data[
+    "50년 회귀선"
+] = model_50.predict(
+    years.reshape(-1, 1)
+)
+
+
+# 100년 회귀선
+regression_data[
+    "100년 회귀선"
+] = model_100.predict(
+    years.reshape(-1, 1)
+)
+
+
+regression_data = (
+    regression_data
+    .set_index("연도")
+)
+
 
 st.subheader(
-    "📈 1906~2025년 실제값과 회귀선 비교"
+    "📈 1906~2025년 실제값과 회귀선"
 )
+
 
 st.line_chart(
     regression_data,
@@ -794,99 +1029,92 @@ st.line_chart(
 
 
 # ============================================================
-# 26. 결과 해석
+# 27. 자동 해석
 # ============================================================
 
-st.subheader("📝 결과 해석")
-
-if mae_50 < mae_100:
-
-    mae_text = (
-        "50년 학습 모델이 MAE에서 더 우수합니다."
-    )
-
-else:
-
-    mae_text = (
-        "100년 학습 모델이 MAE에서 더 우수합니다."
-    )
+st.subheader("📝 분석 결과 해석")
 
 
-if mse_50 < mse_100:
-
-    mse_text = (
-        "50년 학습 모델이 MSE에서 더 우수합니다."
-    )
-
-else:
-
-    mse_text = (
-        "100년 학습 모델이 MSE에서 더 우수합니다."
-    )
-
-
-if r2_50 > r2_100:
-
-    r2_text = (
-        "50년 학습 모델이 R²에서 더 우수합니다."
-    )
-
-else:
-
-    r2_text = (
-        "100년 학습 모델이 R²에서 더 우수합니다."
-    )
-
-
-st.write(
+st.markdown(
     f"""
-    **① 기울기**
+### 회귀선 기울기
 
-    - 50년 모델: **{slope_50:.6f} °C/년**
-    - 100년 모델: **{slope_100:.6f} °C/년**
-    - 기울기 차이: **{slope_difference:.6f} °C/년**
-    
-    **② 테스트 성능**
+- **1956~2005년 학습:** {slope_50:.6f} °C/년
+- **1906~2005년 학습:** {slope_100:.6f} °C/년
+- **차이:** {slope_difference:.6f} °C/년
 
-    - {mae_text}
-    - {mse_text}
-    - {r2_text}
-    
-    **③ 테스트 기간**
+따라서 50년 학습 회귀선은 10년 기준
+**{slope_50 * 10:.4f} °C** 변화하는 추세를,
+100년 학습 회귀선은 10년 기준
+**{slope_100 * 10:.4f} °C** 변화하는 추세를 나타냅니다.
+"""
+)
 
-    두 모델 모두 동일하게 **2006~2025년**을 테스트 데이터로
-    사용했기 때문에 두 모델의 성능을 직접 비교할 수 있습니다.
-    """
+
+st.markdown(
+    f"""
+### 2006~2025년 예측 성능
+
+| 지표 | 50년 학습 | 100년 학습 |
+|---|---:|---:|
+| MAE | {mae_50:.4f} | {mae_100:.4f} |
+| MSE | {mse_50:.4f} | {mse_100:.4f} |
+| R² | {r2_50:.4f} | {r2_100:.4f} |
+
+- MAE가 더 낮은 모델: **{mae_result}**
+- MSE가 더 낮은 모델: **{mse_result}**
+- R²가 더 높은 모델: **{r2_result}**
+"""
 )
 
 
 # ============================================================
-# 27. CSV 다운로드
+# 28. 결과 다운로드
 # ============================================================
 
 st.subheader("💾 결과 다운로드")
 
-csv_result = prediction.to_csv(
+
+# ------------------------------------------------------------
+# 예측 결과 CSV
+# ------------------------------------------------------------
+
+prediction_csv = prediction_display.to_csv(
     index=False,
     encoding="utf-8-sig"
 )
 
+
 st.download_button(
-    label="2006~2025년 예측 결과 CSV 다운로드",
-    data=csv_result,
+    label="📥 2006~2025 예측 결과 다운로드",
+    data=prediction_csv,
     file_name="temperature_prediction_2006_2025.csv",
     mime="text/csv"
 )
 
 
-csv_model = results.to_csv(
+# ------------------------------------------------------------
+# 모델 비교 결과 CSV
+# ------------------------------------------------------------
+
+results_csv = results.to_csv(
     index=False,
     encoding="utf-8-sig"
 )
 
+
 st.download_button(
-    label="모델 성능 비교 결과 CSV 다운로드",
-    data=csv_model,
+    label="📥 모델 성능 비교 결과 다운로드",
+    data=results_csv,
     file_name="temperature_model_comparison.csv",
     mime="text/csv"
+)
+
+
+# ============================================================
+# 끝
+# ============================================================
+
+st.success(
+    "분석이 완료되었습니다."
 )
